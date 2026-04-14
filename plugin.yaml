@@ -1,0 +1,15 @@
+name: zep
+version: 1.0.0
+description: >
+  Zep memory provider for Hermes Agent. Persists conversations into Zep's
+  temporal knowledge graph, enabling cross-session recall, fact retrieval,
+  and personalized context assembly via Zep Cloud.
+pip_dependencies:
+  - zep-cloud
+hooks:
+  - sync_turn
+  - on_session_end
+  - on_memory_write
+  - prefetch
+  - queue_prefetch
+  - system_prompt_block
