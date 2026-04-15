@@ -78,7 +78,7 @@ class ZepMemoryProvider(MemoryProvider):
         origin_user_id = str(origin.get("user_id", ""))
 
         if self._platform and chat_type == "dm" and origin_user_id:
-            self._thread_id = f"{self._platform}_user_{origin_user_id}"
+            self._thread_id = f"{self._platform}_{origin_user_id}"
         elif self._platform and chat_id:
             self._thread_id = f"{self._platform}_{chat_id}"
         else:
