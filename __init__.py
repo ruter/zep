@@ -61,10 +61,28 @@ class ZepMemoryProvider(MemoryProvider):
 
         self._user_id = self._config.get("user_id", "hermes-user")
         self._user_name = self._config.get("first_name", "Hermes")
-        self._thread_id = f"hermes-{self._session_id}"
 
-        # Ensure user and thread exist in Zep
+        # Platform type from hermes kwargs (e.g. "discord", "telegram", "cli")
+        self._platform = kwargs.get("platform", "").lower()
+
+        # Ensure user exists in Zep
         self._ensure_user()
+
+        # Build a deterministic thread ID from platform + chat_id so the
+        # same channel always reuses the same Zep thread.
+        # e.g. discord_374456867646210050, telegram_-1001234567890
+        chat_id = self._resolve_chat_id(session_id)
+        if self._platform and chat_id:
+            self._thread_id = f"{self._platform}_{chat_id}"
+        elif self._platform and kwargs.get("user_id"):
+            # Fallback: per-user thread (DMs or when chat_id unavailable)
+            self._thread_id = f"{self._platform}_user_{kwargs['user_id']}"
+        else:
+            logger.warning(
+                "platform=%r chat_id=%r — falling back to session-based thread ID",
+                self._platform, chat_id,
+            )
+            self._thread_id = f"hermes-{self._session_id}"
         self._ensure_thread()
 
         # Warm the user cache at startup (Zep best practice: warm when user
@@ -79,6 +97,29 @@ class ZepMemoryProvider(MemoryProvider):
     # ------------------------------------------------------------------
     # User / thread helpers
     # ------------------------------------------------------------------
+
+    def _resolve_chat_id(self, session_id: str) -> str:
+        """Resolve the chat_id for this session from the hermes session store.
+
+        Reads the gateway sessions.json to find the origin chat_id for the
+        given session_id. Returns empty string if not found.
+        """
+        if not self._hermes_home:
+            return ""
+        sessions_file = Path(self._hermes_home) / "sessions" / "sessions.json"
+        if not sessions_file.exists():
+            return ""
+        try:
+            data = json.loads(sessions_file.read_text())
+            for _key, entry in data.items():
+                if entry.get("session_id") == session_id:
+                    origin = entry.get("origin")
+                    if origin:
+                        return str(origin.get("chat_id", ""))
+            return ""
+        except Exception as exc:
+            logger.debug("Could not resolve chat_id from sessions.json: %s", exc)
+            return ""
 
     def _ensure_user(self) -> None:
         """Create the Zep user if it doesn't already exist.
@@ -328,7 +369,7 @@ class ZepMemoryProvider(MemoryProvider):
         """
         pass
 
-    def sync_turn(self, user_content: str, assistant_content: str) -> None:
+    def sync_turn(self, user_content: str, assistant_content: str, **kwargs) -> None:
         """Persist the conversation turn to Zep. Must be non-blocking.
 
         Zep best practices applied:
