@@ -68,19 +68,24 @@ class ZepMemoryProvider(MemoryProvider):
         # Ensure user exists in Zep
         self._ensure_user()
 
-        # Build a deterministic thread ID from platform + chat_id so the
-        # same channel always reuses the same Zep thread.
-        # e.g. discord_374456867646210050, telegram_-1001234567890
-        chat_id = self._resolve_chat_id(session_id)
-        if self._platform and chat_id:
+        # Build a deterministic thread ID from platform + chat context so the
+        # same channel/DM always reuses the same Zep thread.
+        # DM  → {platform}_user_{user_id}   e.g. discord_user_123456789
+        # Group/Channel → {platform}_{chat_id}  e.g. discord_374456867646210050
+        origin = self._resolve_session_origin(session_id)
+        chat_type = origin.get("chat_type", "")
+        chat_id = str(origin.get("chat_id", ""))
+        origin_user_id = str(origin.get("user_id", ""))
+
+        if self._platform and chat_type == "dm" and origin_user_id:
+            self._thread_id = f"{self._platform}_user_{origin_user_id}"
+        elif self._platform and chat_id:
             self._thread_id = f"{self._platform}_{chat_id}"
-        elif self._platform and kwargs.get("user_id"):
-            # Fallback: per-user thread (DMs or when chat_id unavailable)
-            self._thread_id = f"{self._platform}_user_{kwargs['user_id']}"
         else:
             logger.warning(
-                "platform=%r chat_id=%r — falling back to session-based thread ID",
-                self._platform, chat_id,
+                "platform=%r chat_type=%r chat_id=%r — "
+                "falling back to session-based thread ID",
+                self._platform, chat_type, chat_id,
             )
             self._thread_id = f"hermes-{self._session_id}"
         self._ensure_thread()
@@ -98,28 +103,26 @@ class ZepMemoryProvider(MemoryProvider):
     # User / thread helpers
     # ------------------------------------------------------------------
 
-    def _resolve_chat_id(self, session_id: str) -> str:
-        """Resolve the chat_id for this session from the hermes session store.
+    def _resolve_session_origin(self, session_id: str) -> dict:
+        """Resolve the origin metadata for this session from the hermes session store.
 
-        Reads the gateway sessions.json to find the origin chat_id for the
-        given session_id. Returns empty string if not found.
+        Returns the origin dict (with chat_id, chat_type, user_id, etc.)
+        or empty dict if not found.
         """
         if not self._hermes_home:
-            return ""
+            return {}
         sessions_file = Path(self._hermes_home) / "sessions" / "sessions.json"
         if not sessions_file.exists():
-            return ""
+            return {}
         try:
             data = json.loads(sessions_file.read_text())
             for _key, entry in data.items():
                 if entry.get("session_id") == session_id:
-                    origin = entry.get("origin")
-                    if origin:
-                        return str(origin.get("chat_id", ""))
-            return ""
+                    return entry.get("origin") or {}
+            return {}
         except Exception as exc:
-            logger.debug("Could not resolve chat_id from sessions.json: %s", exc)
-            return ""
+            logger.debug("Could not resolve origin from sessions.json: %s", exc)
+            return {}
 
     def _ensure_user(self) -> None:
         """Create the Zep user if it doesn't already exist.
